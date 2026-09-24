@@ -5,6 +5,7 @@ import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.InetAddress
 import java.net.URL
+import java.util.Base64
 import java.util.LinkedHashMap
 import java.util.Locale
 import kotlin.math.min
@@ -15,7 +16,7 @@ import kotlin.math.min
  * The address family (IPv4 vs IPv6) is derived from the IP string by the
  * native layer, so only the textual [ip] and the [port] need to be supplied.
  */
-data class ResolvedAddress(val ip: String, val port: Int)
+data class ResolvedAddress(val ip: String, val port: Int, val echConfig: ByteArray? = null)
 
 /**
  * Pluggable name resolution. Implement this to replace the built-in DNS
@@ -61,6 +62,7 @@ class DohResolver(
         val positiveTtlMillis: Long?,
         val negativeTtlMillis: Long?,
         val cacheableNegative: Boolean,
+        val echConfig: ByteArray? = null,
     )
 
     private val cache = object : LinkedHashMap<String, CacheEntry>(16, 0.75f, true) {
@@ -79,16 +81,18 @@ class DohResolver(
         }
 
         val out = mutableListOf<ResolvedAddress>()
+        var echConfig: ByteArray? = null
         var positiveTtlMillis: Long? = null
         var negativeTtlMillis: Long? = null
         var allQueriesHaveCacheableNegative = true
-        for (type in types) {
+        for (type in (types + "HTTPS").distinct()) {
             val result = query(host, port, type)
             if (result == null) {
                 allQueriesHaveCacheableNegative = false
                 continue
             }
             out += result.addresses
+            if (echConfig == null) echConfig = result.echConfig
             result.positiveTtlMillis?.let {
                 positiveTtlMillis = positiveTtlMillis?.let { current -> min(current, it) } ?: it
             }
@@ -98,17 +102,18 @@ class DohResolver(
             }
         }
 
+        val resolved = if (echConfig == null) out else out.map { it.copy(echConfig = echConfig) }
         val ttlMillis = when {
-            out.isNotEmpty() -> positiveTtlMillis
+            resolved.isNotEmpty() -> positiveTtlMillis
             allQueriesHaveCacheableNegative -> negativeTtlMillis
             else -> null
         }
         if (ttlMillis != null && ttlMillis > 0) {
             val boundedTtl = min(ttlMillis, MAX_CACHE_TTL_MILLIS)
             val expiresAt = now + boundedTtl * NANOS_PER_MILLI
-            synchronized(cache) { cache[key] = CacheEntry(out.toList(), expiresAt) }
+            synchronized(cache) { cache[key] = CacheEntry(resolved.toList(), expiresAt) }
         }
-        return out
+        return resolved
     }
 
     private fun query(host: String, port: Int, type: String): QueryResult? {
@@ -142,6 +147,7 @@ class DohResolver(
         val status = response.optInt("Status", -1)
         val answers = response.optJSONArray("Answer") ?: JSONArray()
         val addresses = mutableListOf<ResolvedAddress>()
+        var echConfig: ByteArray? = null
         var answerTtlMillis: Long? = null
         for (i in 0 until answers.length()) {
             val answer = answers.optJSONObject(i) ?: continue
@@ -149,17 +155,31 @@ class DohResolver(
             ttlMillis?.let {
                 answerTtlMillis = answerTtlMillis?.let { current -> min(current, it) } ?: it
             }
-            if (answer.optInt("type") !in setOf(TYPE_A, TYPE_AAAA)) continue
-            val ip = answer.optString("data").trim()
-            if (ip.isNotEmpty()) addresses += ResolvedAddress(ip, port)
+            when (answer.optInt("type")) {
+                TYPE_A, TYPE_AAAA -> {
+                    val ip = answer.optString("data").trim()
+                    if (ip.isNotEmpty()) addresses += ResolvedAddress(ip, port)
+                }
+                TYPE_HTTPS -> echConfig = extractEchConfig(answer.optString("data")) ?: echConfig
+            }
         }
-        if (addresses.isNotEmpty()) {
-            return QueryResult(addresses, answerTtlMillis, null, false)
+        if (addresses.isNotEmpty() || echConfig != null) {
+            return QueryResult(addresses, answerTtlMillis, null, false, echConfig)
         }
 
         val negativeTtlMillis = negativeTtlMillis(response.optJSONArray("Authority"))
         val isDnsNegative = status == DNS_STATUS_NOERROR || status == DNS_STATUS_NXDOMAIN
         return QueryResult(emptyList(), null, negativeTtlMillis, isDnsNegative && negativeTtlMillis != null)
+    }
+
+    private fun extractEchConfig(data: String): ByteArray? {
+        val value = Regex("(?:^|\\s)ech=(?:\\\"([^\\\"]+)\\\"|([^\\s]+))")
+            .find(data)?.let { it.groupValues[1].ifEmpty { it.groupValues[2] } }
+            ?: return null
+        return runCatching { Base64.getDecoder().decode(value) }
+            .recoverCatching { Base64.getUrlDecoder().decode(value) }
+            .getOrNull()
+            ?.takeIf { it.isNotEmpty() }
     }
 
     private fun negativeTtlMillis(authority: JSONArray?): Long? {
@@ -186,6 +206,7 @@ class DohResolver(
         const val TYPE_A = 1
         const val TYPE_SOA = 6
         const val TYPE_AAAA = 28
+        const val TYPE_HTTPS = 65
         const val DNS_STATUS_NOERROR = 0
         const val DNS_STATUS_NXDOMAIN = 3
         const val MAX_CACHE_ENTRIES = 128

@@ -72,6 +72,8 @@ typedef struct kathttp3_resolved_address {
     char ip[64]; /* textual IPv4 or IPv6 */
     uint16_t port;
     int family; /* AF_INET / AF_INET6 */
+    uint8_t ech_config[4096];
+    size_t ech_config_len;
 } kathttp3_resolved_address;
 
 /* Custom name-resolution hook. `out` must be filled with up to *out_count

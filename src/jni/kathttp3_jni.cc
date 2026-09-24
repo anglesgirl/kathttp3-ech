@@ -3,6 +3,7 @@
 #include <sys/socket.h>
 
 #include <atomic>
+#include <array>
 #include <chrono>
 #include <cstring>
 #include <limits>
@@ -31,10 +32,12 @@ struct JniCache {
     jclass address_class = nullptr;
     jclass resolver_class = nullptr;
     jclass callback_class = nullptr;
+    jclass byte_array_class = nullptr;
     jmethodID list_size = nullptr;
     jmethodID list_get = nullptr;
     jmethodID address_ip = nullptr;
     jmethodID address_port = nullptr;
+    jmethodID address_ech_config = nullptr;
     jmethodID resolver_resolve = nullptr;
     jmethodID callback_headers = nullptr;
     jmethodID callback_body = nullptr;
@@ -56,6 +59,7 @@ bool cache_class(JNIEnv* env, const char* name, jclass* destination) {
 bool initialize_jni_cache(JNIEnv* env) {
     if (!cache_class(env, "java/lang/String", &g_jni.string_class) ||
         !cache_class(env, "java/util/List", &g_jni.list_class) ||
+        !cache_class(env, "[B", &g_jni.byte_array_class) ||
         !cache_class(env, "dev/kathttp3/ResolvedAddress", &g_jni.address_class) ||
         !cache_class(env, "dev/kathttp3/DnsResolver", &g_jni.resolver_class) ||
         !cache_class(env, "dev/kathttp3/internal/NativeCallback", &g_jni.callback_class)) {
@@ -66,6 +70,8 @@ bool initialize_jni_cache(JNIEnv* env) {
     g_jni.list_get = env->GetMethodID(g_jni.list_class, "get", "(I)Ljava/lang/Object;");
     g_jni.address_ip = env->GetMethodID(g_jni.address_class, "getIp", "()Ljava/lang/String;");
     g_jni.address_port = env->GetMethodID(g_jni.address_class, "getPort", "()I");
+    g_jni.address_ech_config =
+        env->GetMethodID(g_jni.address_class, "getEchConfig", "()[B");
     g_jni.resolver_resolve =
         env->GetMethodID(g_jni.resolver_class, "resolve", "(Ljava/lang/String;I)Ljava/util/List;");
     g_jni.callback_headers = env->GetMethodID(g_jni.callback_class, "onHeaders",
@@ -74,7 +80,8 @@ bool initialize_jni_cache(JNIEnv* env) {
     g_jni.callback_complete = env->GetMethodID(g_jni.callback_class, "onComplete", "()V");
     g_jni.callback_error = env->GetMethodID(g_jni.callback_class, "onError", "(I)V");
     const bool ready = !env->ExceptionCheck() && g_jni.list_size && g_jni.list_get &&
-                       g_jni.address_ip && g_jni.address_port && g_jni.resolver_resolve &&
+                       g_jni.address_ip && g_jni.address_port && g_jni.address_ech_config &&
+                       g_jni.resolver_resolve &&
                        g_jni.callback_headers && g_jni.callback_body && g_jni.callback_complete &&
                        g_jni.callback_error;
     if (!ready) release_jni_cache(env);
@@ -83,7 +90,7 @@ bool initialize_jni_cache(JNIEnv* env) {
 
 void release_jni_cache(JNIEnv* env) {
     jclass* classes[] = {&g_jni.string_class, &g_jni.list_class, &g_jni.address_class,
-                         &g_jni.resolver_class, &g_jni.callback_class};
+                         &g_jni.resolver_class, &g_jni.callback_class, &g_jni.byte_array_class};
     for (jclass* cls : classes) {
         if (*cls) env->DeleteGlobalRef(*cls);
         *cls = nullptr;
@@ -337,11 +344,51 @@ int jni_resolve_cb(const char* host, uint16_t port, void* userdata, kathttp3_res
         const int family = ip && inet_pton(AF_INET, ip, &ipv4) == 1    ? AF_INET
                            : ip && inet_pton(AF_INET6, ip, &ipv6) == 1 ? AF_INET6
                                                                        : 0;
+        std::array<uint8_t, 4096> ech_config{};
+        jbyteArray jech = reinterpret_cast<jbyteArray>(
+            env->CallObjectMethod(elem, g_jni.address_ech_config));
+        if (env->ExceptionCheck()) {
+            env->ExceptionClear();
+            if (ip) env->ReleaseStringUTFChars(jip, ip);
+            if (jip) env->DeleteLocalRef(jip);
+            env->DeleteLocalRef(elem);
+            failed = true;
+            break;
+        }
+        size_t ech_len = 0;
+        if (jech) {
+            const jsize length = env->GetArrayLength(jech);
+            if (length < 0 || static_cast<size_t>(length) > ech_config.size()) {
+                env->DeleteLocalRef(jech);
+                if (ip) env->ReleaseStringUTFChars(jip, ip);
+                if (jip) env->DeleteLocalRef(jip);
+                env->DeleteLocalRef(elem);
+                failed = true;
+                break;
+            }
+            ech_len = static_cast<size_t>(length);
+            if (length > 0) {
+                env->GetByteArrayRegion(jech, 0, length,
+                                        reinterpret_cast<jbyte*>(ech_config.data()));
+                if (env->ExceptionCheck()) {
+                    env->ExceptionClear();
+                    env->DeleteLocalRef(jech);
+                    if (ip) env->ReleaseStringUTFChars(jip, ip);
+                    if (jip) env->DeleteLocalRef(jip);
+                    env->DeleteLocalRef(elem);
+                    failed = true;
+                    break;
+                }
+            }
+            env->DeleteLocalRef(jech);
+        }
         if (family != 0 && aport > 0 && aport <= UINT16_MAX) {
             std::strncpy(out[written].ip, ip, sizeof(out[written].ip) - 1);
             out[written].ip[sizeof(out[written].ip) - 1] = '\0';
             out[written].port = static_cast<uint16_t>(aport);
             out[written].family = family;
+            out[written].ech_config_len = ech_len;
+            if (ech_len != 0) std::memcpy(out[written].ech_config, ech_config.data(), ech_len);
             ++written;
         }
         if (ip) env->ReleaseStringUTFChars(jip, ip);

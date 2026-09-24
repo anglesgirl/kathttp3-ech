@@ -100,7 +100,8 @@ class TlsClientSession {
 
     /* `conn_ref` must outlive the session; it is used by the ngtcp2_crypto
      * callbacks to recover the ngtcp2_conn. */
-    bool init(TlsClientContext& ctx, const std::string& server_name, SSL_SESSION* resume_session,
+    bool init(TlsClientContext& ctx, const std::string& server_name,
+              const std::vector<uint8_t>& ech_config, SSL_SESSION* resume_session,
               bool* enable_early_data, ngtcp2_crypto_conn_ref* conn_ref);
 
     void set_resumption_transport_params(std::vector<uint8_t> transport_params) {

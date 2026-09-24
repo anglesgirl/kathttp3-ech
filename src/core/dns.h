@@ -19,6 +19,7 @@ struct ResolvedEndpoint {
     std::string ip; /* textual IPv4 or IPv6 */
     uint16_t port = 0;
     int family = 0; /* AF_INET / AF_INET6 */
+    std::vector<uint8_t> ech_config;
 };
 
 /* The first two independently-startable address candidates.  The primary

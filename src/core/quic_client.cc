@@ -942,8 +942,8 @@ bool QuicClient::setup_connection() {
     const bool early_params_installed = early_data_enabled_;
     SSL_SESSION* resume_session = resumption.session;
     resumption.session = nullptr;  // ownership transfers to TlsClientSession::init
-    if (!tls_session_.init(tls_ctx_, origin_.host, resume_session, &early_data_enabled_,
-                           &conn_ref_)) {
+    if (!tls_session_.init(tls_ctx_, origin_.host, peer_endpoint_.ech_config, resume_session,
+                           &early_data_enabled_, &conn_ref_)) {
         return false;
     }
     if (early_params_installed && !early_data_enabled_) ngtcp2_conn_tls_early_data_rejected(conn_);
@@ -1034,8 +1034,8 @@ bool QuicClient::start_handshake_candidate(const ResolvedEndpoint& endpoint) {
     const bool candidate_early_params_installed = candidate_early;
     SSL_SESSION* resume_session = resumption.session;
     resumption.session = nullptr;
-    if (!candidate->tls.init(tls_ctx_, origin_.host, resume_session, &candidate_early,
-                             &candidate->conn_ref))
+    if (!candidate->tls.init(tls_ctx_, origin_.host, endpoint.ech_config, resume_session,
+                             &candidate_early, &candidate->conn_ref))
         return false;
     if (candidate_early_params_installed && !candidate_early)
         ngtcp2_conn_tls_early_data_rejected(candidate->conn);
@@ -1991,6 +1991,11 @@ bool QuicClient::on_handshake_completed() {
     if (!http3_ready_ && http3_) {
         if (http3_->setup_codec()) {
             http3_ready_ = true;
+            if (!peer_endpoint_.ech_config.empty()) {
+#ifdef KATHTTP3_USE_BORINGSSL
+                KATHTTP3_LOG_INFO("ECH negotiated=%d\n", SSL_ech_accepted(tls_session_.native()));
+#endif
+            }
             if (!precommit_failover_window_) try_submit_pending();
             update_keep_alive();
         } else {

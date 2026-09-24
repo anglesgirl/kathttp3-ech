@@ -324,8 +324,8 @@ TlsClientSession& TlsClientSession::operator=(TlsClientSession&& other) noexcept
 }
 
 bool TlsClientSession::init(TlsClientContext& ctx, const std::string& server_name,
-                            SSL_SESSION* resume_session, bool* enable_early_data,
-                            ngtcp2_crypto_conn_ref* conn_ref) {
+                            const std::vector<uint8_t>& ech_config, SSL_SESSION* resume_session,
+                            bool* enable_early_data, ngtcp2_crypto_conn_ref* conn_ref) {
     ssl_ = SSL_new(ctx.native());
     if (!ssl_) {
         SSL_SESSION_free(resume_session);
@@ -358,6 +358,14 @@ bool TlsClientSession::init(TlsClientContext& ctx, const std::string& server_nam
             return false;
         }
     }
+
+#ifdef KATHTTP3_USE_BORINGSSL
+    if (!ech_config.empty() &&
+        SSL_set1_ech_config_list(ssl_, ech_config.data(), ech_config.size()) != 1) {
+        KATHTTP3_LOG_ERR("SSL_set1_ech_config_list failed\n");
+        return false;
+    }
+#endif
 
     if (enable_early_data && *enable_early_data) {
 #ifdef KATHTTP3_USE_BORINGSSL
