@@ -2,8 +2,8 @@
 #include <jni.h>
 #include <sys/socket.h>
 
-#include <atomic>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cstring>
 #include <limits>
@@ -70,8 +70,7 @@ bool initialize_jni_cache(JNIEnv* env) {
     g_jni.list_get = env->GetMethodID(g_jni.list_class, "get", "(I)Ljava/lang/Object;");
     g_jni.address_ip = env->GetMethodID(g_jni.address_class, "getIp", "()Ljava/lang/String;");
     g_jni.address_port = env->GetMethodID(g_jni.address_class, "getPort", "()I");
-    g_jni.address_ech_config =
-        env->GetMethodID(g_jni.address_class, "getEchConfig", "()[B");
+    g_jni.address_ech_config = env->GetMethodID(g_jni.address_class, "getEchConfig", "()[B");
     g_jni.resolver_resolve =
         env->GetMethodID(g_jni.resolver_class, "resolve", "(Ljava/lang/String;I)Ljava/util/List;");
     g_jni.callback_headers = env->GetMethodID(g_jni.callback_class, "onHeaders",
@@ -81,15 +80,14 @@ bool initialize_jni_cache(JNIEnv* env) {
     g_jni.callback_error = env->GetMethodID(g_jni.callback_class, "onError", "(I)V");
     const bool ready = !env->ExceptionCheck() && g_jni.list_size && g_jni.list_get &&
                        g_jni.address_ip && g_jni.address_port && g_jni.address_ech_config &&
-                       g_jni.resolver_resolve &&
-                       g_jni.callback_headers && g_jni.callback_body && g_jni.callback_complete &&
-                       g_jni.callback_error;
+                       g_jni.resolver_resolve && g_jni.callback_headers && g_jni.callback_body &&
+                       g_jni.callback_complete && g_jni.callback_error;
     if (!ready) release_jni_cache(env);
     return ready;
 }
 
 void release_jni_cache(JNIEnv* env) {
-    jclass* classes[] = {&g_jni.string_class, &g_jni.list_class, &g_jni.address_class,
+    jclass* classes[] = {&g_jni.string_class,   &g_jni.list_class,     &g_jni.address_class,
                          &g_jni.resolver_class, &g_jni.callback_class, &g_jni.byte_array_class};
     for (jclass* cls : classes) {
         if (*cls) env->DeleteGlobalRef(*cls);
@@ -345,8 +343,8 @@ int jni_resolve_cb(const char* host, uint16_t port, void* userdata, kathttp3_res
                            : ip && inet_pton(AF_INET6, ip, &ipv6) == 1 ? AF_INET6
                                                                        : 0;
         std::array<uint8_t, 4096> ech_config{};
-        jbyteArray jech = reinterpret_cast<jbyteArray>(
-            env->CallObjectMethod(elem, g_jni.address_ech_config));
+        jbyteArray jech =
+            reinterpret_cast<jbyteArray>(env->CallObjectMethod(elem, g_jni.address_ech_config));
         if (env->ExceptionCheck()) {
             env->ExceptionClear();
             if (ip) env->ReleaseStringUTFChars(jip, ip);

@@ -208,10 +208,11 @@ std::vector<ResolvedEndpoint> resolve_with_c_callback(kathttp3_resolve_cb callba
         if (inet_pton(candidate.family, candidate.ip, parsed.data()) != 1) continue;
 
         const auto length = static_cast<const char*>(terminator) - candidate.ip;
-        endpoints.push_back({std::string(candidate.ip, static_cast<size_t>(length)), candidate.port,
-                             candidate.family,
-                             std::vector<uint8_t>(candidate.ech_config,
-                                                   candidate.ech_config + candidate.ech_config_len)});
+        endpoints.push_back(
+            {std::string(candidate.ip, static_cast<size_t>(length)), candidate.port,
+             candidate.family,
+             std::vector<uint8_t>(candidate.ech_config,
+                                  candidate.ech_config + candidate.ech_config_len)});
     }
     return endpoints;
 }
