@@ -1,9 +1,15 @@
 plugins { id("com.android.application"); id("org.jetbrains.kotlin.plugin.compose") }
 android {
     namespace = "dev.kathttp3.example"; compileSdk = 37
-    defaultConfig { applicationId = "dev.kathttp3.example"; minSdk = 26; targetSdk = 36; versionCode = 1; versionName = "0.1" }
-    buildFeatures { compose = true }
-    compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
+    buildFeatures {
+        compose = true
+        buildConfig = true
+    }
+    val dohUrl = project.findProperty("kathttp3DohUrl")?.toString().orEmpty()
+    require(dohUrl.isNotBlank()) { "kathttp3DohUrl must be provided for the ECH test app" }
+    defaultConfig {
+        buildConfigField("String", "DOH_URL", "\"${dohUrl.replace("\\\"", "\\\\\"")}\"")
+    }
 }
 dependencies {
     implementation(project(":kathttp3"))

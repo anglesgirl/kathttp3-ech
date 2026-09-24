@@ -2,7 +2,9 @@ package dev.kathttp3.example
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import dev.kathttp3.DohResolver
 import dev.kathttp3.KatHttp3Client
+import dev.kathttp3.KatHttp3ClientConfig
 import dev.kathttp3.KatHttp3Header
 import dev.kathttp3.KatHttp3Request
 import kotlinx.coroutines.CancellationException
@@ -61,7 +63,11 @@ data class UiState(
 )
 
 class MainViewModel : ViewModel() {
-    private val client = KatHttp3Client()
+    private val client = KatHttp3Client(
+        KatHttp3ClientConfig(
+            resolver = DohResolver(BuildConfig.DOH_URL),
+        ),
+    )
     private val mutable = MutableStateFlow(UiState())
     val state = mutable.asStateFlow()
 
