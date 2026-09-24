@@ -8,6 +8,11 @@ android {
     val dohUrl = project.findProperty("kathttp3DohUrl")?.toString().orEmpty()
     require(dohUrl.isNotBlank()) { "kathttp3DohUrl must be provided for the ECH test app" }
     defaultConfig {
+        applicationId = "dev.kathttp3.example"
+        minSdk = 26
+        targetSdk = 36
+        versionCode = 2
+        versionName = "0.2-ech"
         buildConfigField("String", "DOH_URL", "\"${dohUrl.replace("\\\"", "\\\\\"")}\"")
     }
 }
