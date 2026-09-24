@@ -1,6 +1,6 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
-    <application android:theme="@style/Theme.KatHttp3" android:usesCleartextTraffic="false" android:label="KatHttp3 Example">
+    <application android:theme="@style/Theme.KatHttp3" android:usesCleartextTraffic="false" android:label="HTTP/3 测试工具">
         <activity android:name=".MainActivity" android:exported="true">
             <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
         </activity>

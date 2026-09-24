@@ -62,7 +62,7 @@ private fun KatHttp3Screen(vm: MainViewModel = viewModel(), initialUrl: String? 
     ) {
         Text("KatHttp3", style = MaterialTheme.typography.headlineMedium)
         Text(
-            "HTTP/3 request explorer — TLS 1.3 over QUIC. Each method has a ready-to-send test preset.",
+            "HTTP/3 网络请求测试工具，基于 TLS 1.3 与 QUIC。",
             style = MaterialTheme.typography.bodyMedium,
         )
 
@@ -71,16 +71,14 @@ private fun KatHttp3Screen(vm: MainViewModel = viewModel(), initialUrl: String? 
             onValueChange = vm::setUrl,
             modifier = Modifier.fillMaxWidth(),
             enabled = !state.loading,
-            label = { Text("HTTPS URL") },
-            supportingText = {
-                Text("Method selection restores its nghttp2 HTTP/3 test preset. You can edit this URL freely.")
-            },
+            label = { Text("请求地址") },
+            supportingText = { Text("输入 HTTPS 地址") },
             singleLine = true,
         )
 
-        Text("Method", style = MaterialTheme.typography.titleMedium)
+        Text("请求方法", style = MaterialTheme.typography.titleMedium)
         Text(
-            "Choose a method, review its URL/body, then send. Selecting a method resets the test defaults.",
+            "选择请求方法并填写请求内容，然后发送。",
             style = MaterialTheme.typography.bodySmall,
         )
         Row(
@@ -102,8 +100,8 @@ private fun KatHttp3Screen(vm: MainViewModel = viewModel(), initialUrl: String? 
             onValueChange = vm::setRequestHeaders,
             modifier = Modifier.fillMaxWidth(),
             enabled = !state.loading,
-            label = { Text("Request headers") },
-            supportingText = { Text("One lowercase name: value pair per line. Example: content-type: application/json") },
+            label = { Text("请求头") },
+            supportingText = { Text("每行填写一项，格式：名称: 值，例如 content-type: application/json") },
             minLines = 2,
             maxLines = 5,
         )
@@ -114,8 +112,8 @@ private fun KatHttp3Screen(vm: MainViewModel = viewModel(), initialUrl: String? 
                 onValueChange = vm::setRequestBody,
                 modifier = Modifier.fillMaxWidth(),
                 enabled = !state.loading,
-                label = { Text("Request body (${state.method})") },
-                supportingText = { Text("UTF-8 text. Content-Length is supplied by the HTTP/3 layer.") },
+                label = { Text("请求正文（${state.method}）") },
+                supportingText = { Text("正文将按 UTF-8 编码发送") },
                 minLines = 5,
                 maxLines = 10,
             )
@@ -123,25 +121,25 @@ private fun KatHttp3Screen(vm: MainViewModel = viewModel(), initialUrl: String? 
             AssistChip(
                 onClick = {},
                 enabled = false,
-                label = { Text("${state.method} is sent without a request body in this example") },
+                label = { Text("${state.method} 请求不使用正文") },
             )
         }
 
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = vm::execute, enabled = !state.loading) {
-                Text("Send ${state.method}")
+                Text("发送 ${state.method}")
             }
-            OutlinedButton(onClick = vm::cancel, enabled = state.loading) { Text("Cancel") }
-            TextButton(onClick = vm::clearResponse, enabled = !state.loading) { Text("Clear result") }
+            OutlinedButton(onClick = vm::cancel, enabled = state.loading) { Text("取消") }
+            TextButton(onClick = vm::clearResponse, enabled = !state.loading) { Text("清除结果") }
         }
 
         if (state.loading) LinearProgressIndicator(Modifier.fillMaxWidth())
-        state.error?.let { ErrorCard(it) }
+        state.error?.let { ErrorCard("请求失败：$it") }
         state.status?.let { ResponseSummary(state) }
-        if (state.responseHeaders.isNotEmpty()) ResponseSection("Response headers", state.responseHeaders)
+        if (state.responseHeaders.isNotEmpty()) ResponseSection("响应头", state.responseHeaders)
         if (state.responseBody.isNotEmpty()) {
             ResponseSection(
-                if (state.responseBodyTruncated) "Response body (first 16,000 characters)" else "Response body",
+                if (state.responseBodyTruncated) "响应正文（仅显示前 16000 个字符）" else "响应正文",
                 state.responseBody,
             )
         }
@@ -153,7 +151,7 @@ private fun KatHttp3Screen(vm: MainViewModel = viewModel(), initialUrl: String? 
 private fun ErrorCard(message: String) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Text(
-            "Request error: $message",
+            "请求错误：$message",
             color = MaterialTheme.colorScheme.error,
             modifier = Modifier.padding(12.dp),
         )
@@ -164,10 +162,10 @@ private fun ErrorCard(message: String) {
 private fun ResponseSummary(state: UiState) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text("Response", style = MaterialTheme.typography.titleMedium)
-            Text("Status: ${state.status}")
-            Text("Protocol: ${state.protocol.ifBlank { "h3" }} (HTTP/3 over QUIC)")
-            Text("Duration: ${state.durationMs ?: 0} ms   Size: ${state.size} bytes")
+            Text("响应", style = MaterialTheme.typography.titleMedium)
+            Text("状态码：${state.status}")
+            Text("协议：${state.protocol.ifBlank { "h3" }}（HTTP/3 over QUIC）")
+            Text("耗时：${state.durationMs ?: 0} 毫秒    大小：${state.size} 字节")
         }
     }
 }
