@@ -161,7 +161,10 @@ jobs:
       - run: >-
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
           "ndk;27.0.12077973" "cmake;3.22.1"
-      - run: ./gradlew --no-daemon buildAndroidNativeDeps -PandroidNativeDepsAbi=x86_64 -PandroidNativeDepsJobs=2
+      - run: >-
+          ./gradlew --no-daemon buildAndroidNativeDeps
+          -PandroidNativeDepsAbi=x86_64 -PandroidNativeDepsJobs=2
+          -Pkathttp3DohUrl="${{ secrets.KATHTTP3_DOH_URL }}"
       - run: sudo apt-get update -qq && sudo apt-get install -y clang clang-tidy cppcheck cmake ninja-build
       - run: >-
           cmake -S . -B build-tidy -G Ninja
