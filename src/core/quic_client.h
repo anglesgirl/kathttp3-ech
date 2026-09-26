@@ -116,8 +116,11 @@ class QuicClient {
     QuicClient(const QuicClient&) = delete;
     QuicClient& operator=(const QuicClient&) = delete;
 
-    /* Called from the Engine thread. Queues the job and wakes the loop. */
-    void submit_job(std::unique_ptr<Job> job);
+    /* Called from the Engine thread. Queues the job and wakes the loop.
+     * Returns false when the connection is already closed/draining: the
+     * caller must report the terminal error itself and the Job (and its
+     * request) is destroyed by the parameter destructor. */
+    bool submit_job(std::unique_ptr<Job> job);
 
     /* Called from any thread. Marks the job cancelled; the loop stops
      * delivering its events and resets the stream if open. */

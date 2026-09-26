@@ -204,7 +204,22 @@ void Engine::execute(kathttp3_request* req, int64_t request_id, kathttp3_event_c
         std::lock_guard<std::mutex> lk(mtx_);
         registry_[request_id] = ReqEntry{cb, user_data, c, false, false, 0};
     }
-    c->submit_job(std::move(job));
+    if (!c->submit_job(std::move(job))) {
+        /* The connection closed (or started draining) between get_or_create
+         * and submit.  Report CLOSED so the caller's continuation resumes,
+         * and drop the registry entry (the job/request are destroyed by the
+         * submit_job parameter destructor). */
+        {
+            std::lock_guard<std::mutex> lk(mtx_);
+            registry_.erase(request_id);
+        }
+        kathttp3_event ev{};
+        ev.type = KATHTTP3_EVENT_ERROR;
+        ev.request_id = request_id;
+        ev.error_code = KATHTTP3_ERR_CLOSED;
+        invoke_callback(cb, user_data, ev, "client closed before submission");
+        return;
+    }
 }
 
 int Engine::consume(int64_t request_id, size_t bytes) {
@@ -358,7 +373,19 @@ void Engine::on_job_headers(Job* job, int status, const HeaderList& headers) {
                         it->second.redirect_count = njob->redirect_count;
                     }
                 }
-                nc->submit_job(std::move(njob));
+                if (!nc->submit_job(std::move(njob))) {
+                    /* The redirect target closed before accepting the job;
+                     * the njob/request are destroyed by the parameter
+                     * destructor. Report CLOSED under the shared request id
+                     * (whose registry entry now points at nc) so the caller
+                     * does not wait forever. */
+                    kathttp3_event ev{};
+                    ev.type = KATHTTP3_EVENT_ERROR;
+                    ev.request_id = job->id;
+                    ev.error_code = KATHTTP3_ERR_CLOSED;
+                    deliver(ev);
+                    return;
+                }
                 return;
             }
         }
@@ -386,6 +413,12 @@ void Engine::on_job_headers(Job* job, int status, const HeaderList& headers) {
 }
 
 void Engine::on_job_body(Job* job, const uint8_t* data, size_t len) {
+    /* on_job_complete()/on_job_error() both skip redirected hops; body bytes
+     * from an intermediate redirect hop must be dropped too.  Otherwise they
+     * leak into the final response (same request id) and a large enough
+     * intermediate body can trip the caller's buffered-body limit, cancelling
+     * the redirected request that is still in flight. */
+    if (job->redirected) return;
     job->received_body_bytes += len;
     dispatch_body(job, data, len);
 }

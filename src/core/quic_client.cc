@@ -664,18 +664,27 @@ void QuicClient::notify_dns_waiter() {
     if (waiter) waiter->changed.notify_all();
 }
 
-void QuicClient::submit_job(std::unique_ptr<Job> job) {
-    job->submitted_at = now_ns();
-    job->last_write_progress_at = job->submitted_at;
+bool QuicClient::submit_job(std::unique_ptr<Job> job) {
     {
         std::lock_guard<std::mutex> lk(job_mutex_);
+        if (stop_.load(std::memory_order_acquire) || closed_.load(std::memory_order_acquire) ||
+            is_draining()) {
+            /* The worker has exited or is draining: no thread will ever open a
+             * stream for this job. Refuse it so the Engine can report CLOSED
+             * instead of leaving the callback suspended forever. The parameter
+             * destructor releases the owned kathttp3_request. */
+            return false;
+        }
+        job->submitted_at = now_ns();
+        job->last_write_progress_at = job->submitted_at;
         pending_jobs_.push_back(std::move(job));
     }
     if (worker_start_.claim_after_enqueue()) {
         thread_ = std::thread([this] { run(); });
-        return;
+        return true;
     }
     wakeup();
+    return true;
 }
 
 void QuicClient::request_network_change(NetworkChangeRequest request) {
@@ -1310,12 +1319,13 @@ void QuicClient::run() {
     connection_started_at_ = now_ns();
     if (!prepare_endpoints()) {
         KATHTTP3_LOG_ERR("run: prepare_endpoints failed -> DNS err\n");
-        fail_all_pending(terminal_error_ == KATHTTP3_ERR_QUIC ? KATHTTP3_ERR_DNS : terminal_error_);
-        /* The worker is about to exit permanently. Publish the terminal state
-         * before returning so Engine::get_or_create_client() cannot reuse this
-         * dead connection for a later request to the same origin. */
+        /* Announce the terminal state before failing jobs: a concurrent
+         * submit_job must be rejected instead of queueing behind a worker
+         * that is about to exit (otherwise its callback never fires and the
+         * Engine registry keeps a dangling pointer to this client). */
         closed_.store(true, std::memory_order_release);
         state_.store(ConnectionState::Closed, std::memory_order_release);
+        fail_all_pending(terminal_error_ == KATHTTP3_ERR_QUIC ? KATHTTP3_ERR_DNS : terminal_error_);
         return;
     }
 
@@ -1344,6 +1354,8 @@ void QuicClient::run() {
                 (terminal_error_ == KATHTTP3_ERR_NETWORK_LOST ||
                  !can_fail_over_before_request_commit())) {
                 const int tls_error = tls_session_.lastFailure().code;
+                closed_.store(true, std::memory_order_release);
+                state_.store(ConnectionState::Closed, std::memory_order_release);
                 fail_all_pending(tls_error != 0 ? tls_error : terminal_error_);
             }
             if (conn_) {
@@ -1351,8 +1363,13 @@ void QuicClient::run() {
                 conn_ = nullptr;
             }
             sock_.close();
-            closed_.store(true);
-            state_.store(ConnectionState::Closed);
+            closed_.store(true, std::memory_order_release);
+            state_.store(ConnectionState::Closed, std::memory_order_release);
+            /* Race branch exit: the loop returned 0 (drain/idle/shutdown) or a
+             * failover already dispatched terminal errors.  Sweep anything
+             * still queued so no callback is left suspended and no registry
+             * entry keeps pointing at this destroyed client. */
+            fail_all_pending(KATHTTP3_ERR_CLOSED);
             return;
         }
         /* A race failure may be address-specific.  Release its isolated
@@ -1360,9 +1377,9 @@ void QuicClient::run() {
          * fallback for additional resolver results. */
         handshake_candidates_.clear();
         if (terminal_error_ == KATHTTP3_ERR_NETWORK_LOST) {
+            closed_.store(true, std::memory_order_release);
+            state_.store(ConnectionState::Closed, std::memory_order_release);
             fail_all_pending(terminal_error_);
-            closed_.store(true);
-            state_.store(ConnectionState::Closed);
             return;
         }
     }
@@ -1416,8 +1433,17 @@ void QuicClient::run() {
         conn_ = nullptr;
     }
     sock_.close();
-    closed_.store(true);
-    state_.store(ConnectionState::Closed);
+    /* Announce the terminal state before the final sweep so a concurrent
+     * submit_job() is rejected instead of queueing behind a worker that is
+     * about to exit (otherwise its callback never fires and the Engine
+     * registry keeps a dangling pointer to this destroyed client). */
+    closed_.store(true, std::memory_order_release);
+    state_.store(ConnectionState::Closed, std::memory_order_release);
+    /* Normal exit (handshake confirmed, loop returned 0 on idle timeout /
+     * GOAWAY drain complete / shutdown): jobs still queued or in flight must
+     * still receive a terminal event.  Without this, pending jobs stay
+     * suspended forever and the registry holds pointers to a dead client. */
+    fail_all_pending(KATHTTP3_ERR_CLOSED);
 }
 
 int QuicClient::event_loop() {
