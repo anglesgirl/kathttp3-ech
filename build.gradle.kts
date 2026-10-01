@@ -5,7 +5,7 @@ plugins {
     // 编译链，AGP 9 内置 Kotlin 2.4 的 AAR 元数据（2.4.0）CO3 读不了。
     id("org.jetbrains.kotlin.android") version "2.1.20" apply false
     // Compose 编译器与 Kotlin 版本配对（example 模块用）。
-    id("org.jetbrains.kotlin.plugin.compose") version "2.1.20" apply false
+    id("org.jetbrains.kotlin.plugin.compose") version "2.4.20" apply false
 }
 
 val nativeDepsAbi = providers.gradleProperty("androidNativeDepsAbi")
