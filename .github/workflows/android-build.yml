@@ -77,8 +77,9 @@ jobs:
           :kathttp3:testDebugUnitTest
           :kathttp3:lintDebug
           :kathttp3:assembleRelease
+          :example:assembleRelease
           -PandroidNativeDepsJobs=2 -PandroidNativeDepsParallelAbis=2
-          -Pkathttp3DohUrl="${{ secrets.KATHTTP3_DOH_URL }}"
+          -Pkathttp3DohUrl="${{ secrets.KATHTTP3_DOH_URL || 'https://223.5.5.5/dns-query' }}"
       - name: Verify release outputs
         run: |
           aar="$(find kathttp3/build/outputs/aar -name '*-release.aar' -print -quit)"
@@ -86,10 +87,13 @@ jobs:
           for abi in arm64-v8a armeabi-v7a x86_64 x86; do
             unzip -Z1 "$aar" | grep -Fx "jni/$abi/libkathttp3.so"
           done
-          # example skipped
+          apk="$(find example/build/outputs/apk -name '*.apk' -print -quit)"
+          test -n "$apk"
+          echo "example APK: $apk"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: kathttp3-android-build
           path: |
             kathttp3/build/outputs/aar/*.aar
+            example/build/outputs/apk/release/*.apk
             
