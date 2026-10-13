@@ -14,8 +14,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import org.json.JSONArray
-import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.Base64
@@ -145,44 +143,91 @@ class MainViewModel : ViewModel() {
         val httpsRecords: List<String>,
     )
 
-    /** 直接 GET DoH JSON，解析 HTTPS 记录（type=65），提取 ech= 参数。 */
+    /** 构造 DNS wire format 查询（header + question），type=HTTPS(65)。 */
+    private fun buildDnsQuery(domain: String, qtype: Int): ByteArray {
+        val out = java.io.ByteArrayOutputStream()
+        // ID(2) + flags(2: RD=1) + QDCOUNT=1 + ANCOUNT=0 + NSCOUNT=0 + ARCOUNT=0
+        out.write(byteArrayOf(0x12, 0x34, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00))
+        for (label in domain.split(".")) {
+            out.write(label.length)
+            out.write(label.toByteArray(Charsets.US_ASCII))
+        }
+        out.write(0)
+        out.write(byteArrayOf((qtype shr 8).toByte(), qtype.toByte(), 0x00, 0x01))
+        return out.toByteArray()
+    }
+
+    /** 解析 DNS 响应的 HTTPS 记录：priority + target + params(key=5 即 ech)。 */
+    private fun parseHttpsRecords(data: ByteArray): List<Pair<ByteArray?, String>> {
+        val out = mutableListOf<Pair<ByteArray?, String>>()
+        var off = 12
+        val qd = ((data[4].toInt() and 0xFF) shl 8) or (data[5].toInt() and 0xFF)
+        repeat(qd) {
+            while (data[off].toInt() != 0) off++
+            off += 5
+        }
+        val an = ((data[6].toInt() and 0xFF) shl 8) or (data[7].toInt() and 0xFF)
+        repeat(an) {
+            // name：压缩指针或 labels
+            if ((data[off].toInt() and 0xC0) == 0xC0) off += 2
+            else {
+                while (data[off].toInt() != 0) off++
+                off += 1
+            }
+            val rtype = ((data[off].toInt() and 0xFF) shl 8) or (data[off + 1].toInt() and 0xFF)
+            val rdlen = ((data[off + 8].toInt() and 0xFF) shl 8) or (data[off + 9].toInt() and 0xFF)
+            off += 10
+            val rdata = data.copyOfRange(off, off + rdlen)
+            off += rdlen
+            if (rtype != 65) return@repeat
+            // rdata: priority(2) + target(name) + params
+            var pos = 2
+            val target = StringBuilder()
+            while (rdata[pos].toInt() != 0) {
+                val len = rdata[pos].toInt()
+                pos++
+                target.append(rdata.copyOfRange(pos, pos + len).toString(Charsets.US_ASCII)).append('.')
+                pos += len
+            }
+            pos++ // root label
+            var ech: ByteArray? = null
+            while (pos + 4 <= rdata.size) {
+                val key = ((rdata[pos].toInt() and 0xFF) shl 8) or (rdata[pos + 1].toInt() and 0xFF)
+                val vlen = ((rdata[pos + 2].toInt() and 0xFF) shl 8) or (rdata[pos + 3].toInt() and 0xFF)
+                if (pos + 4 + vlen > rdata.size) break
+                val value = rdata.copyOfRange(pos + 4, pos + 4 + vlen)
+                if (key == 5 && ech == null && value.isNotEmpty()) ech = value
+                pos += 4 + vlen
+            }
+            val desc = "priority=${((rdata[0].toInt() and 0xFF) shl 8) or (rdata[1].toInt() and 0xFF)} " +
+                "target=${target.toString().ifEmpty { "<owner>" }} " +
+                "ech=${ech?.size ?: "无"}"
+            out.add(ech to desc)
+        }
+        return out
+    }
+
+    /** 直接 GET RFC8484 DoH（dns= wire format），解析 HTTPS 记录并提取 ECH。 */
     private fun queryHttpsRecord(doh: String, domain: String): HttpsQueryResult? {
+        val wire = buildDnsQuery(domain, 65)
+        val b64 = Base64.getUrlEncoder().withoutPadding().encodeToString(wire)
         val sep = if ('?' in doh) "&" else "?"
-        val url = "$doh${sep}name=$domain&type=HTTPS"
+        val url = "$doh${sep}dns=$b64"
         val conn: HttpURLConnection = URL(url).openConnection() as HttpURLConnection
         return try {
             conn.requestMethod = "GET"
-            conn.setRequestProperty("Accept", "application/dns-json")
+            conn.setRequestProperty("Accept", "application/dns-message")
             conn.connectTimeout = 5000
             conn.readTimeout = 5000
-            val body = conn.inputStream.bufferedReader().use { it.readText() }
-            val json = JSONObject(body)
-            val answers = json.optJSONArray("Answer") ?: JSONArray()
-            val httpsRecords = mutableListOf<String>()
-            var ech: ByteArray? = null
-            for (i in 0 until answers.length()) {
-                val a = answers.optJSONObject(i) ?: continue
-                if (a.optInt("type") != 65) continue
-                val data = a.optString("data")
-                httpsRecords += data
-                extractEch(data)?.let { if (ech == null) ech = it }
-            }
-            HttpsQueryResult(ech, httpsRecords)
+            val data = conn.inputStream.use { it.readBytes() }
+            val records = parseHttpsRecords(data)
+            val firstEch = records.firstNotNullOfOrNull { it.first }
+            HttpsQueryResult(firstEch, records.map { it.second })
         } catch (e: Exception) {
             null
         } finally {
             conn.disconnect()
         }
-    }
-
-    private fun extractEch(data: String): ByteArray? {
-        val value = Regex("(?:^|\\s)ech=(?:\\\"([^\\\"]+)\\\"|([^\\s]+))")
-            .find(data)?.let { it.groupValues[1].ifEmpty { it.groupValues[2] } }
-            ?: return null
-        return runCatching { Base64.getDecoder().decode(value) }
-            .recoverCatching { Base64.getUrlDecoder().decode(value) }
-            .getOrNull()
-            ?.takeIf { it.isNotEmpty() }
     }
 
     /** 发一个 H3 GET 请求，返回一行结果描述。 */
