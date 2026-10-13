@@ -1,6 +1,6 @@
 plugins { id("com.android.application"); id("org.jetbrains.kotlin.android"); id("org.jetbrains.kotlin.plugin.compose") }
 android {
-    namespace = "dev.kathttp3.example"; compileSdk = 36
+    namespace = "dev.kathttp3.example"; compileSdk = 37
     buildFeatures {
         compose = true
         buildConfig = true
