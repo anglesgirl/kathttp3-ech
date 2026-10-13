@@ -3,7 +3,6 @@ package dev.kathttp3.example
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dev.kathttp3.DnsResolver
-import dev.kathttp3.DohResolver
 import dev.kathttp3.KatHttp3Client
 import dev.kathttp3.KatHttp3ClientConfig
 import dev.kathttp3.KatHttp3Header
@@ -15,6 +14,11 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import org.json.JSONObject
+import java.net.HttpURLConnection
+import java.net.URL
+import java.util.Base64
 import kotlin.time.TimeSource
 
 /** 国内四家纯数字 DoH（IP 直连，绕过移动对 DoH 域名的屏蔽）。 */
@@ -114,23 +118,71 @@ class MainViewModel : ViewModel() {
         val log = StringBuilder()
         var firstFound: ByteArray? = null
         for (doh in DOH_LIST) {
-            val resolver = DohResolver(
-                endpoint = doh,
-                // 至少查 A 记录：DohResolver 只在有地址时才会把 ECH 配置带回
-                types = listOf("A"),
-                connectTimeoutMs = 5_000,
-                readTimeoutMs = 5_000,
-            )
-            val result = runCatching { resolver.resolve(snapshot.echDomain, 443) }.getOrNull()
-            val ech = result?.firstOrNull()?.echConfig
-            if (ech != null && ech.isNotEmpty()) {
-                if (firstFound == null) firstFound = ech
-                log.append("    ✓ $doh 拿到 ECH 配置\n")
-            } else {
-                log.append("    ✗ $doh 无 ECH 配置（可能不通或被劫持）\n")
+            val result = queryHttpsRecord(doh, snapshot.echDomain)
+            when {
+                result == null -> log.append("    ✗ $doh 请求失败（连接超时/被劫持）\n")
+                result.ech != null -> {
+                    if (firstFound == null) firstFound = result.ech
+                    log.append("    ✓ $doh 拿到 ECH（${result.ech.size} 字节）\n")
+                }
+                result.httpsRecords.isEmpty() -> {
+                    log.append("    ✗ $doh 返回正常但无 HTTPS 记录\n")
+                }
+                else -> {
+                    val raw = result.httpsRecords.first().let {
+                        if (it.length > 90) it.take(90) + "…" else it
+                    }
+                    log.append("    ✗ $doh 有 HTTPS 记录但无 ech= 参数\n")
+                    log.append("      raw: $raw\n")
+                }
             }
         }
         return firstFound to log.toString()
+    }
+
+    private class HttpsQueryResult(
+        val ech: ByteArray?,
+        val httpsRecords: List<String>,
+    )
+
+    /** 直接 GET DoH JSON，解析 HTTPS 记录（type=65），提取 ech= 参数。 */
+    private fun queryHttpsRecord(doh: String, domain: String): HttpsQueryResult? {
+        val sep = if ('?' in doh) "&" else "?"
+        val url = "$doh${sep}name=$domain&type=HTTPS"
+        val conn: HttpURLConnection = URL(url).openConnection() as HttpURLConnection
+        return try {
+            conn.requestMethod = "GET"
+            conn.setRequestProperty("Accept", "application/dns-json")
+            conn.connectTimeout = 5000
+            conn.readTimeout = 5000
+            val body = conn.inputStream.bufferedReader().use { it.readText() }
+            val json = JSONObject(body)
+            val answers = json.optJSONArray("Answer") ?: JSONArray()
+            val httpsRecords = mutableListOf<String>()
+            var ech: ByteArray? = null
+            for (i in 0 until answers.length()) {
+                val a = answers.optJSONObject(i) ?: continue
+                if (a.optInt("type") != 65) continue
+                val data = a.optString("data")
+                httpsRecords += data
+                extractEch(data)?.let { if (ech == null) ech = it }
+            }
+            HttpsQueryResult(ech, httpsRecords)
+        } catch (e: Exception) {
+            null
+        } finally {
+            conn.disconnect()
+        }
+    }
+
+    private fun extractEch(data: String): ByteArray? {
+        val value = Regex("(?:^|\\s)ech=(?:\\\"([^\\\"]+)\\\"|([^\\s]+))")
+            .find(data)?.let { it.groupValues[1].ifEmpty { it.groupValues[2] } }
+            ?: return null
+        return runCatching { Base64.getDecoder().decode(value) }
+            .recoverCatching { Base64.getUrlDecoder().decode(value) }
+            .getOrNull()
+            ?.takeIf { it.isNotEmpty() }
     }
 
     /** 发一个 H3 GET 请求，返回一行结果描述。 */
