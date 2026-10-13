@@ -134,7 +134,7 @@ class MainViewModel : ViewModel() {
     }
 
     /** 发一个 H3 GET 请求，返回一行结果描述。 */
-    private fun runH3(ip: String, host: String, ech: ByteArray?): String {
+    private suspend fun runH3(ip: String, host: String, ech: ByteArray?): String {
         val client = KatHttp3Client(
             KatHttp3ClientConfig(
                 resolver = FixedResolver(ip, ech),
