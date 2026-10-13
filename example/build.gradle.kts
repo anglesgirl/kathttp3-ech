@@ -5,6 +5,10 @@ android {
         compose = true
         buildConfig = true
     }
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
     val dohUrl = project.findProperty("kathttp3DohUrl")?.toString().orEmpty()
     require(dohUrl.isNotBlank()) { "kathttp3DohUrl must be provided for the ECH test app" }
     defaultConfig {
