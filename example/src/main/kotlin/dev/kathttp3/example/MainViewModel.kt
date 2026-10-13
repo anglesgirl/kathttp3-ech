@@ -40,8 +40,8 @@ private class FixedResolver(private val ip: String, private val echConfig: ByteA
 private const val MAX_LOG_CHARS = 30_000
 
 data class Ao3TestState(
-    val ip: String = "104.244.46.211",
-    val host: String = "archiveofourown.org",
+    val ip: String = "172.67.152.100",
+    val host: String = "ao3.org",
     val echDomain: String = "crypto.cloudflare.com",
     val loading: Boolean = false,
     val log: String = "",
