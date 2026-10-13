@@ -246,7 +246,17 @@ class MainViewModel : ViewModel() {
             val ms = mark.elapsedNow().inWholeMilliseconds
             "    ${if (response.status in 200..599) "✓" else "✗"} HTTP ${response.status}  协议 ${response.protocol}  耗时 ${ms}ms  大小 ${response.body.size} 字节"
         } catch (t: Throwable) {
-            "    ✗ 失败：${t.message ?: t.javaClass.simpleName}"
+            // 完整错误链：类型名 + message + cause，用于按阶段定位
+            val chain = buildString {
+                var cur: Throwable? = t
+                while (cur != null) {
+                    append(cur.javaClass.simpleName)
+                    cur.message?.let { append(": ").append(it) }
+                    cur = cur.cause
+                    if (cur != null) append(" → ")
+                }
+            }
+            "    ✗ 失败：$chain"
         } finally {
             client.close()
         }
