@@ -6,7 +6,11 @@ plugins {
 
 android {
     namespace = "dev.kathttp3"
-    compileSdk = 37
+    // 37 is not usable on JitPack: its SDK image lacks a platform AGP 8.12
+    // accepts as 'android-37' (auto-install yields android-37.0, rejected).
+    // compileSdk only gates compile-time API use; it has no runtime effect
+    // on consumers of the AAR. 36 is stable and present on JitPack.
+    compileSdk = 36
 
     defaultConfig {
         minSdk = 26
