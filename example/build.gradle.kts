@@ -9,8 +9,11 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+    // JitPack builds :kathttp3 without this property but configures all
+    // modules, so a hard require here fails the whole library publish.
+    // Default to Ali DoH; an explicit -Pkathttp3DohUrl still wins.
     val dohUrl = project.findProperty("kathttp3DohUrl")?.toString().orEmpty()
-    require(dohUrl.isNotBlank()) { "kathttp3DohUrl must be provided for the ECH test app" }
+        .ifBlank { "https://dns.alidns.com/dns-query" }
     defaultConfig {
         applicationId = "dev.kathttp3.example"
         minSdk = 26
